@@ -19,6 +19,7 @@ NETWORK--[PAT]--[Gig1/0/24]--Cat9k--[AppGigabitEthernet1/0/1]-[Vlan101]--TE
 ## Requirements
 - Catalyst 9300, minimum IOS-XE 17.3.3
 - Ansible 2.11.2
+- Docker on local machine (for testing proxy function)
 - Ansible automation script offers a DIY alternative to turn-key automation offered by Cisco DNA Center. Cisco DNA Center has built-in Application Deployment workflows. 
 
 ## References
@@ -26,6 +27,8 @@ NETWORK--[PAT]--[Gig1/0/24]--Cat9k--[AppGigabitEthernet1/0/1]-[Vlan101]--TE
 -- https://docs.thousandeyes.com/product-documentation/global-vantage-points/enterprise-agents/troubleshooting/installing-ca-certificates-on-enterprise-agents
 - Cisco, ThousandEyes deployment guide
 -- https://www.cisco.com/c/en/us/products/collateral/switches/catalyst-9400-series-switches/guide-c07-2431113.html
+- Docker Squid Container (for verification of proxy operation)
+-- https://github.com/salrashid123/squid_proxy
 
 ## Script folder structure
 - pem: 
@@ -178,7 +181,7 @@ c9300p28                   : ok=11   changed=0    unreachable=0    failed=0    s
 
 ```
 
-## Sample execution
+## Resulting Application Hosting configuration on one of the cat9ks
 ```sh
 app-hosting appid cat9kte
  app-vnic AppGigabitEthernet trunk
@@ -196,3 +199,85 @@ app-hosting appid cat9kte
  name-server0 128.107.212.175
  name-server1 64.102.6.247
  ```
+ ```sh
+C9300#sh run int gi 1/0/24
+!
+interface GigabitEthernet1/0/24
+ no switchport
+ ip address 10.1.1.5 255.255.255.0
+ ip nat outside
+end
+
+C9300#sh run int vlan 101
+!
+interface Vlan101
+ ip address 192.168.2.1 255.255.255.0
+ ip nat inside
+end
+
+C9300#sh vlan id 101
+
+VLAN Name                             Status    Ports
+---- -------------------------------- --------- -------------------------------
+101  AppH-TE-VLAN                     active    Ap1/0/1
+
+C9300#sh run | s NAT_ACL
+ip nat inside source list NAT_ACL interface GigabitEthernet1/0/24 overload
+ip access-list standard NAT_ACL
+ 10 permit 192.168.0.0 0.0.255.255
+ ```
+ ## Resulting configuration inside docker TE container
+Notice presence of CA_crt.pem, gdig2.crt.pem, and gdroot-g2.pem files in the certificate store
+ ```sh
+root@c9300p27-te:/# ls /usr/share/ca-certificates/
+CA_crt.pem  gdig2.crt.pem  gdroot-g2.pem  mozilla  thousandeyes
+ ```
+ Notice the three certs added to the tail of the config file
+```sh
+root@c9300p27-te:/# tail /etc/ca-certificates.conf
+mozilla/Microsoft_RSA_Root_Certificate_Authority_2017.crt
+mozilla/Trustwave_Global_Certification_Authority.crt
+mozilla/Trustwave_Global_ECC_P256_Certification_Authority.crt
+mozilla/Trustwave_Global_ECC_P384_Certification_Authority.crt
+mozilla/UCA_Extended_Validation_Root.crt
+mozilla/UCA_Global_G2_Root.crt
+thousandeyes/Microsoft_Root_Certificate_Authority_2011.crt
+gdig2.crt.pem
+gdroot-g2.pem
+CA_crt.pem
+```
+ 
+ 
+ ## Proxy Verification
+ To verify operation of the deployed TE agents, we can employ a pre-built Squid docker container with SSL decrypt:
+ ```sh
+ docker run  -p 3128:3128 -ti docker.io/salrashid123/squidproxy /apps/squid/sbin/squid -NsY -f /apps/squid.conf.intercept
+ ```
+ 
+## TE Proxy interop Verification - just before insertion of PEM certs. Note "peer certificate cannot be authenticated"
+```sh
+C9300#app-hosting connect appid cat9kte session /bin/bash
+root@c9300p27-te:/# tail -f /var/log/agent/te-agent.log
+2021-07-26 21:40:55.889 INFO  [993dea40] [te.agent.main] {} Agent starting up
+2021-07-26 21:40:55.889 INFO  [993dea40] [te.agent.main] {} No agent id found, attempting to obtain one
+2021-07-26 21:40:55.889 INFO  [993dea40] [te.agent.ClusterMasterAdapter] {} Attempting to get agent id from sc1.thousandeyes.com
+2021-07-26 21:40:56.897 ERROR [993dea40] [te.agent.main] {} Error calling create_agent: Curl error - Peer certificate cannot be authenticated with given CA certificates
+```
+## TE Proxy interop Verification - this time with proxy SSL cert installed into TE
+```sh
+C9300#app-hosting connect appid cat9kte session /bin/bash
+root@c9300p27-te:/# tail -f /var/log/agent/te-agent.log 
+2021-07-26 22:45:41.225 DEBUG [c17fa700] [te.agent.DataSubmitter] {} Trying to get results for https://data1.agt.thousandeyes.com/mixed
+2021-07-26 22:45:41.225 DEBUG [c17fa700] [te.agent.DataSubmitter] {} Trying to get results for https://data1.agt.thousandeyes.com/screenshots
+2021-07-26 22:45:41.226 DEBUG [c17fa700] [te.agent.DataSubmitter] {} Trying to get results for https://data1.agt.thousandeyes.com/load
+2021-07-26 22:45:53.924 DEBUG [a5feb700] [te.agent.AgentRelayStreamHandler] {} Proxying enabled
+2021-07-26 22:45:53.925 DEBUG [a5feb700] [te.agent.AgentRelayStreamHandler] {} Establishing control channel connection to c1.thousandeyes.com
+2021-07-26 22:45:57.473 DEBUG [ca418a40] [te.agent.NtpClient] {} Sending NTP packet to pool.ntp.org (82.197.164.46)
+2021-07-26 22:46:00.476 WARN  [ca418a40] [te.agent.ClockOffsetCalculator] {} Error getting NTP clock offset: No response from server
+2021-07-26 22:46:00.506 INFO  [ca418a40] [te.agent.ClockOffsetCalculator] {} NTP clock offset expired. Using estimated clock offset 19 seconds
+2021-07-26 22:46:00.506 INFO  [ca418a40] [te.agent.main] {} Done calling check in
+2021-07-26 22:46:00.510 INFO  [ca418a40] [te.agent.main] {} Controller tells us we are enabled
+2021-07-26 22:46:00.515 DEBUG [ca418a40] [te.agent.main] {} Commit thread sleeping for 27 seconds
+2021-07-26 22:46:03.925 DEBUG [a5feb700] [te.agent.AgentRelayStreamHandler] {} Control channel disconnected after 10 seconds
+2021-07-26 22:46:03.926 DEBUG [a5feb700] [te.agent.AgentRelayStreamHandler] {} Reconnecting control channel in 30 seconds
+  ```
