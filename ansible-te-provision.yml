@@ -1,0 +1,153 @@
+---
+
+- name:  Automated Distribution and Activation of ThousandEyes Enterprise Agent on Catalyst 9300
+  hosts: cat9k
+  gather_facts: no
+  vars:
+    # assume app is not deployed on each box
+    # this var will change based on show app-hosting list output
+    te_app_present: false
+    te_app_state: NONE
+
+  tasks:
+    - include_vars: params.yml
+
+    - name: Check IOSXE version
+      ios_facts:
+
+    - block:
+      - name: Check running Apps
+        cisco.ios.ios_command:
+          commands: "show app-hosting list"
+        register: showapp
+
+      - name: Setting facts | TE App Present
+        set_fact:
+          te_app_present: true
+          te_app_state: "{{(item|regex_findall('\\S+'))[1]}}"
+        # show app-hosting list outputs a header followed by each application name one per line
+        # we are splitting the output line in list based on newline, and stripping the header
+        loop: "{{((showapp.stdout[0]).split('\n'))[2:]}}"
+        # only set fact on the matching application line
+        when: item is search(te_appid)
+
+      - block:
+        - name: Check TE tar presence | Remote
+          cisco.ios.ios_command:
+            commands: "dir {{flash_path}}: | inc {{te_file}}"
+          register: dirflashte
+
+        - name: Check TE tar presence | Local
+          ansible.builtin.stat:
+            path: "{{te_dir}}{{te_file}}"
+          register: dirlocalte
+
+        - name: Setting facts | Remote TE archive size
+          set_fact:
+            # Note: we are using regex_findall to get all matching fields as opposed to first match via regex_search
+            # Third field ie [2] returns the size of the file on target flash
+            # If there is no file on flash, set length 0
+            te_flash_size: "{% if (dirflashte.stdout[0] | length) > 0 %}{{(dirflashte.stdout[0]|regex_findall('([^\\s]+)'))[2]}}{% else %}0{% endif %}"
+            te_local_size:  "{{dirlocalte.stat.size|int}}"
+
+        - debug:
+            msg:
+              - "Size check: {{te_flash_size}}|{{te_local_size}}|{{te_local_size == te_flash_size}}"
+
+        - name: Configure TE Vlan
+          cisco.ios.ios_vlans:
+            config:
+              - name: "{{te.vlan_name}}"
+                vlan_id: "{{ te.vlan_id | int }}"
+                state: active
+                shutdown: disabled
+            state: merged
+
+        - name: Configure TE VLAN SVI
+          cisco.ios.ios_l3_interface:
+            name: "Vlan{{te.vlan_id}}"
+            ipv4: "{{te.vlan_ip}}"
+            
+
+        - name: Configure TE NAT ACL
+          ios_config:
+            lines:
+              - 10 permit ip {{te.acl_subnet}} {{te.acl_mask}} any
+            parents: ip access-list extended {{te.acl_name}}
+            match: exact
+
+        - name: Configure NAT on Outside inteface
+          ios_config:
+            lines:
+              - ip nat outside
+            parents: interface {{te.outside_nic}}
+
+        - name: Configure NAT on Inside inteface
+          ios_config:
+            lines:
+              - ip nat inside
+            parents: interface Vlan{{te.vlan_id}}
+
+        - name: Configure NAT
+          ios_config:
+            lines:
+              - ip nat inside source list {{te.acl_name}} interface {{te.outside_nic}} overload
+
+        - name: Enable AppH TE Docker Container definition
+          ios_config:
+            lines:
+              - guest-ipaddress {{te.ip}} netmask {{te.netmask}}
+            parents: 
+              - app-hosting appid {{te_appid}}
+              - app-vnic AppGigabitEthernet trunk
+              - vlan {{te.vlan_id}} guest-interface 0
+
+        - name: Enable AppH TE Docker Container routing
+          ios_config:
+            lines:
+              - app-default-gateway {{te.dg}} guest-interface 0
+              - name-server0 {{te.nameserver1}}
+              - name-server1 {{te.nameserver2}}
+            parents:
+              - app-hosting appid {{te_appid}}
+
+        - name: Enable AppH TE Docker Container TE params
+          ios_config:
+            lines:
+              - prepend-pkg-opts
+              - run-opts 1 "-e TEAGENT_ACCOUNT_TOKEN={{te.token}}"
+              - run-opts 2 "--hostname {{inventory_hostname}}{{te.hostname}}"
+              - run-opts 3 "-e TEAGENT_PROXY_TYPE={{te.proxy_type}}"
+              - run-opts 4 "-e TEAGENT_PROXY_LOCATION='{{te.proxy_location}}'"
+            parents:
+              - app-hosting appid {{te_appid}}
+              - app-resource docker
+
+        - name: Adding Proxy Authentication if required
+          ios_config:
+            lines:
+              - run-opts 5 "-e TEAGENT_PROXY_USER='{{te.proxy_username}}'"
+              - run-opts 6 "-e TEAGENT_PROXY_PASS='{{te.proxy_password}}'"
+            parents:
+              - app-hosting appid {{te_appid}}
+              - app-resource docker
+              - prepend-pkg-opts
+          when: te.proxy_username != ''
+
+        - name: Copy TE tar if remote size does not match
+          ansible.netcommon.net_put:
+            src: '{{te_dir}}{{te_file}}'
+            protocol: scp
+            dest: '{{flash_path}}:/{{te_file}}'
+          when: te_local_size != te_flash_size
+
+        - name: Activate AppH
+          cisco.ios.ios_command:
+            commands:
+              - "app-hosting install appid {{te_appid}} package {{flash_path}}:{{te_file}}"
+              - "app-hosting activate appid {{te_appid}}"
+              - "app-hosting start appid {{te_appid}}"
+        # EXECUTE ONLY WHEN APP IS NOT PRESENT IN THE LIST OF DEPLOYED APPS
+        when: te_app_state == 'NONE'
+      # EXECUTE ONLY WHEN COMPLIANT IOSXE VERSION IS DETECTED
+      when: ansible_net_version in ios_compliant_version

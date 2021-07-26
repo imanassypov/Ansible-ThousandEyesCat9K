@@ -1,0 +1,13 @@
+---
+- name: Ansible TE Distribution
+  hosts: cat9k
+  gather_facts: no
+  tasks:
+    - include_vars: params.yml
+
+- name: Step1. TE Distribution and Activation
+  import_playbook: ansible-te-provision.yml
+  when: deploy_te | bool == true
+
+- name: Step2. TE Proxy Cert Distribution and Activation
+  import_playbook: ansible-te-certinstall.yml

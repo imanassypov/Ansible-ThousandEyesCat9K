@@ -1,0 +1,53 @@
+---
+
+- name:  Automated Distribution of ThousandEyes Enterprise Agent with Proxy SSL Certificates to Catalyst 9300
+  hosts: cat9k
+  gather_facts: no
+
+  tasks:
+    - include_vars: params.yml
+
+    - name: CHECK_APP_RUNNING
+      cisco.ios.ios_command:
+        commands: "show app-hosting list | i {{te_appid}}"
+      register: appid_presence
+
+    - block:
+      - name: CHECK_PEM_PRESENCE
+        cisco.ios.ios_command:
+          commands: "dir {{flash_path}}: | inc {{item}}"
+        with_items:
+          - "{{pem_file}}"
+        register: dirflashpem
+
+      - name: COPY_PEM
+        ansible.netcommon.net_put:
+          src: '{{pem_dir}}{{item.item}}'
+          protocol: scp
+          dest: '{{flash_path}}:/{{item.item}}'
+          when: item.stdout[0] | length > 0
+        with_items: '{{dirflashpem.results}}'
+
+      - block:
+         - name: COPY_PEM_CONTAINER
+           cisco.ios.ios_command:
+             commands:
+             - command: 'app-hosting data appid {{te_appid}} copy {{flash_path}}:{{item.item}} {{item.item}}'
+           with_items: '{{dirflashpem.results}}'
+           failed_when: false
+        rescue:
+        - name: Rescue block
+          debug:
+            msg: 'File {{item.item}}  exists on {{te_appid}}. Skipping...'
+
+      - name: SESSION_TO_APPID
+        cisco.ios.ios_command:
+          commands:
+          - command: 'app-hosting connect appid {{te_appid}} session /bin/bash'
+          - command: 'cp /iox_data/appdata/{{item.item}} /usr/share/ca-certificates/{{item.item}}'
+          - command: 'grep -qxF {{item.item}} /etc/ca-certificates.conf || echo {{item.item}} >> /etc/ca-certificates.conf'
+          - command: 'update-ca-certificates'
+          - command: 'exit'
+        with_items: '{{dirflashpem.results}}'
+
+      when: appid_presence.stdout_lines is match(".*RUNNING")

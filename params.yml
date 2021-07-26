@@ -1,0 +1,35 @@
+---
+ansible_command_timeout: 1200
+deploy_te: yes
+flash_path: flash
+pem_dir: /home/auto/Ansible-TE/pem/
+pem_file:
+ - gdig2.crt.pem
+ - gdroot-g2.pem
+ - CA_crt.pem
+te_dir: /home/auto/Ansible-TE/te-agent/
+te_file: thousandeyes-enterprise-agent-3.0.cat9k.tar
+te_appid: cat9kte
+# List of compliant versions
+ios_compliant_version:  
+  - BLD_V176_THROTTLE_LATEST_20210616_014014
+
+te:
+  ip: 192.168.2.3
+  netmask: 255.255.255.0
+  dg: 192.168.2.1
+  vlan_id: 101
+  vlan_name: AppH-TE-VLAN
+  vlan_ip: 192.168.2.1/24
+  outside_nic: GigabitEthernet1/0/24
+  acl_name: TE_NAT_ACL
+  acl_subnet: 192.168.2.0
+  acl_mask: 0.0.0.255
+  hostname: -te
+  token: hszo4by8im0wtnuj7p7k1mv4vtsi8y29
+  proxy_type: STATIC
+  proxy_location: 10.1.1.3:3128
+  proxy_username: ''
+  proxy_password: ''
+  nameserver1: 128.107.212.175
+  nameserver2: 64.102.6.247
