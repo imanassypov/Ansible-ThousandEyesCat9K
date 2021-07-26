@@ -42,13 +42,13 @@ NETWORK--[PAT]--[Gig1/0/24]--Cat9k--[AppGigabitEthernet1/0/1]-[Vlan101]--TE
 
 ## Sample execution
 Deployment script operates in two phases:
-i) TE agent deployment and activation
+- TE agent deployment and activation
 -- Verify if IOSXE meets minimum requirement
 -- Verify TE App is already deployed
 -- If TE App is not deployed, provision basic configuration (TE Vlan, AppGigEthernet trunk, NAT, NAT ACL)
 -- Check for presence of TE installer tar, and distribution if necessary
 -- TE App install, activate and start
-ii) Enterprise Proxy SSL Certificate distribution
+- Enterprise Proxy SSL Certificate distribution
 -- Verify if TE App is in 'RUNNING' state
 -- Transfer list of Proxy SSL pub certificates to the switch
 -- Transfer the same certs into the running TE container
