@@ -49,19 +49,9 @@ NETWORK--[PAT]--[Gig1/0/24]--Cat9k--[AppGigabitEthernet1/0/1]-[Vlan101]--TE
 ## Sample execution
 Deployment script operates in two steps:
 - Step 1. TE agent deployment and activation (note: this step is mutually exclusive with DNAC Application Hosting workflow. You should deploy your docker containers either through DNAC or Ansible)
-Verify if IOSXE meets minimum requirement
-Verify TE App is already deployed
-If TE App is not deployed, provision basic configuration (TE Vlan, AppGigEthernet trunk, NAT, NAT ACL)
-Check for presence of TE installer tar, and distribution if necessary
-TE App install, activate and start
 
 - Step 2. Enterprise Proxy SSL Certificate distribution (note: this step can be applied to TE agents already in 'RUNNING' state and deployed through either Ansible or DNAC workflows)
-Verify if TE App is in 'RUNNING' state
-Transfer list of Proxy SSL pub certificates to the switch
-Transfer the same certs into the running TE container
-Move the certs inside the container to the cert store folder (ie /usr/share/ca-certificates)
-Update the cert reference config /etc/ca-certificates.conf
-Regenerate certificate store
+
 
 ```sh
  ansible-playbook -i hosts ansible-te-complete.yml 
