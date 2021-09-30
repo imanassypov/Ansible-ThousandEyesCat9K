@@ -13,12 +13,47 @@
       register: appid_presence
 
     - block:
+
+      - name: Checking PEM certificates | local 
+        stat:
+          path: "{{pem_dir}}{{item}}"
+        register: dirlocalpem
+        with_items: 
+           - "{{pem_file}}"
+
+      - name: Checking PEM certificates | remote
+        cisco.ios.ios_command:
+          commands: "dir {{flash_path}}: | inc {{item}}"
+        with_items:
+          - "{{pem_file}}"
+        register: dirflashpem
+
+      - name: Setting PEM facts | local
+        set_fact:
+          local_pem_files: "{{ local_pem_files|default([]) + [ { 'pem': item.item, 'size': item.stat.size } ] }}"
+        with_items: "{{dirlocalpem.results}}"
+
+      - name: Setting PEM facts | remote
+        set_fact:
+          remote_pem_files: "{{ remote_pem_files|default([]) + [ { 'pem': item.item, 'size': (item.stdout[0]|regex_findall('([^\\s]+)'))[2] if (item.stdout[0] | length) > 0 else '0' } ] }}"
+        with_items: "{{dirflashpem.results}}"
+
+      - name: Checking for presence of certificate PEM on local machine
+        stat:
+          path: "{{pem_dir}}{{item}}"
+        register: dirlocalpem
+        with_items:
+           - "{{pem_file}}"
+
       - name: Copying certificate pem file to target
         ansible.netcommon.net_put:
-          src: '{{pem_dir}}{{item}}'
+          src: '{{pem_dir}}{{item.0.pem}}'
           protocol: scp
-          dest: '{{flash_path}}:/{{item}}'
-        with_items: '{{pem_file}}'
+          dest: '{{flash_path}}:/{{item.0.pem}}'
+        with_together:
+          - '{{local_pem_files}}'
+          - '{{remote_pem_files}}'
+        when: item.0.pem == item.1.pem and item.0.size != item.1.size
 
       - block:
          - name: Injecting certificate pem into running TE container
